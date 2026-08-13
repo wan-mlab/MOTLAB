@@ -102,7 +102,7 @@ def parse_args():
     parser.add_argument("--ancestry_file", default="Genetic_Ancestry.xlsx")
     parser.add_argument("--cdr_file", default="TCGA-CDR-SupplementalTableS1.xlsx")
     parser.add_argument("--strata_file", default="BRCA_subtype_stage.csv")
-    parser.add_argument("--init_module", default="Initialization_kernel",
+    parser.add_argument("--init_module", default="Initialization",
                         help="Python module implementing CCSA pair creation/model training.")
 
     # Model / CV settings used in the updated analysis
@@ -152,7 +152,7 @@ theano_cache.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("THEANO_FLAGS", f"base_compiledir={theano_cache}")
 
 # Import the project-side CCSA implementation after --dat_path and THEANO_FLAGS are set.
-Initialization_kernel = __import__(ARGS.init_module)
+Initialization = __import__(ARGS.init_module)
 
 print("Data path:", DATA_DIR)
 print("Output path:", RUN_DIR)
@@ -581,7 +581,7 @@ def train_and_predict(
     input_a = Input(shape=(n_features,))
     input_b = Input(shape=(n_features,))
 
-    shared_model = Initialization_kernel.Create_Model(hiddenLayers=hidden_layers, dr=dropout)
+    shared_model = Initialization.Create_Model(hiddenLayers=hidden_layers, dr=dropout)
     processed_a = shared_model(input_a)
     processed_b = shared_model(input_b)
 
@@ -590,8 +590,8 @@ def train_and_predict(
     out_class = Activation("softmax", name="classification")(out_class)
 
     distance = Lambda(
-        Initialization_kernel.euclidean_distance,
-        output_shape=Initialization_kernel.eucl_dist_output_shape,
+        Initialization.euclidean_distance,
+        output_shape=Initialization.eucl_dist_output_shape,
         name="CSA",
     )([processed_a, processed_b])
 
@@ -603,7 +603,7 @@ def train_and_predict(
     model.compile(
         loss={
             "classification": tf.keras.losses.SparseCategoricalCrossentropy(),
-            "CSA": Initialization_kernel.contrastive_loss,
+            "CSA": Initialization.contrastive_loss,
         },
         optimizer=optimizer,
         loss_weights={"classification": 1.0 - float(alpha), "CSA": float(alpha)},
@@ -612,7 +612,7 @@ def train_and_predict(
     pairs_dir = Path(pairs_dir).resolve()
     pairs_dir.mkdir(parents=True, exist_ok=True)
 
-    Initialization_kernel.Create_Pairs(
+    Initialization.Create_Pairs(
         domain_adaptation_task=domain_adaptation_task,
         repetition=repetition,
         sample_per_class=sample_per_class,
@@ -629,7 +629,7 @@ def train_and_predict(
         smote_k_max=5,
     )
 
-    Initialization_kernel.training_the_model(
+    Initialization.training_the_model(
         model=model,
         domain_adaptation_task=domain_adaptation_task,
         repetition=repetition,
