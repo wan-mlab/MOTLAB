@@ -20,7 +20,7 @@ This script implements the analysis pipeline used in the updated manuscript:
   9. Save seed-level metrics and patient-level/subgroup reviewer outputs.
 
 Required project-side module:
-  Initialization_kernel.py
+  Initialization.py
 
 Expected default input files under --dat_path:
   mRNA_filtered.csv
