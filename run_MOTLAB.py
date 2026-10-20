@@ -3,32 +3,6 @@
 
 """
 MOTLAB execution script for breast-cancer clinical outcome prediction modeling
-
-This script implements the analysis pipeline used in the updated manuscript:
-  1. Align mRNA, miRNA, and DNA methylation data at the TCGA patient level.
-  2. Apply sample-wise normalization within each omics layer.
-  3. Construct a weighted three-omics feature representation by concatenation.
-  4. Define prognosis labels from the TCGA Clinical Data Resource.
-  5. Use European american patients as the source domain and African american
-     patients as the target domain.
-  6. Within each target domain CV fold, construct leakage-safe patient-to-anchor
-     Pearson-correlation features using source patients plus few-shot target-train
-     patients as anchors.
-  7. Select features using the source domain training labels only.
-  8. Compare transfer learning (TL) with TL plus target domain
-     synthetic data augmentation (TLDA).
-  9. Save seed-level metrics and patient-level/subgroup reviewer outputs.
-
-Required project-side module:
-  Initialization.py
-
-Expected default input files under --dat_path:
-  mRNA_filtered.csv
-  miRNA_filtered.csv
-  methyl_filtered.csv
-  Genetic_Ancestry.xlsx
-  TCGA-CDR-SupplementalTableS1.xlsx
-  BRCA_subtype_stage.csv
 """
 import argparse
 import json
@@ -58,7 +32,6 @@ from sklearn.model_selection import StratifiedKFold
 # -----------------------------------------------------------------------------
 # Command-line interface
 # -----------------------------------------------------------------------------
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description=("This script implements a fairness-aware deep learning model designed to mitigate\n"
@@ -101,7 +74,7 @@ def parse_args():
     parser.add_argument("--ancestry_file", default="Genetic_Ancestry.xlsx")
     parser.add_argument("--cdr_file", default="TCGA-CDR-SupplementalTableS1.xlsx")
     parser.add_argument("--strata_file", default="BRCA_subtype_stage.csv")
-    parser.add_argument("--init_module", default="Initialization_kernel_pytest",
+    parser.add_argument("--init_module", default="Initialization",
                         help="Python module implementing CCSA pair creation/model training.")
 
     # Model / CV settings used in the updated analysis
@@ -131,7 +104,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
 
 ARGS = parse_args()
 DATA_DIR = Path(ARGS.dat_path).expanduser().resolve()
@@ -171,14 +143,12 @@ def configure_gpu():
 
 configure_gpu()
 
-
 # -----------------------------------------------------------------------------
 # Reproducibility / utility helpers
 # -----------------------------------------------------------------------------
 
 def make_seed_fold(seed_base: int, fold_id: int) -> int:
     return int(seed_base) * 1000 + int(fold_id)
-
 
 def set_all_seeds(seed: int):
     seed = int(seed)
@@ -187,12 +157,10 @@ def set_all_seeds(seed: int):
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-
 def make_pairs_dir(run_tag: str, seed_base: int, fold_id: int) -> Path:
     path = RUN_DIR / "CCSA_pairs" / str(run_tag) / f"seed{seed_base}_fold{fold_id}"
     path.mkdir(parents=True, exist_ok=True)
     return path
-
 
 def concordance_index_simple(T, risk, E):
     """Harrell-style C-index; higher risk means earlier/worse event."""
@@ -219,11 +187,9 @@ def concordance_index_simple(T, risk, E):
         return np.nan
     return (concordant + 0.5 * ties) / comparable
 
-
 # -----------------------------------------------------------------------------
 # Clinical / ancestry data
 # -----------------------------------------------------------------------------
-
 def get_race(cancer_type="BRCA"):
     path = DATA_DIR / ARGS.ancestry_file
     df_race = pd.read_excel(
@@ -242,11 +208,10 @@ def get_race(cancer_type="BRCA"):
     df_race.loc[df_race["EIGENSTRAT"] == "OA", "race"] = "OTHER"
     return df_race.drop(columns=["EIGENSTRAT"])
 
-
 def get_CT(target):
     path = DATA_DIR / ARGS.cdr_file
+    cols = "B,Z,AA"
 
-    cols = "B,Z,AA"       # OS
     if target == "DSS":
         cols = "B,AB,AC"
     elif target == "DFI":
@@ -260,12 +225,11 @@ def get_CT(target):
     df["C"] = 1 - df["E"]
     return df.drop(columns=["E"])
 
-
 def add_race_CT(df, target, meta_df=None, groups=("WHITE", "BLACK")):
     """Attach ancestry, survival outcome, and optional subgroup metadata."""
     df = df.copy()
     df.index = df.index.astype(str)
-
+  
     df_race = get_race("BRCA")
     df_race.index = df_race.index.astype(str)
     df_race = df_race[df_race["race"].isin(groups)]
@@ -307,7 +271,6 @@ def add_race_CT(df, target, meta_df=None, groups=("WHITE", "BLACK")):
     print("After ancestry + outcome + metadata join:", len(data["Samples"]), "patients")
     return data
 
-
 def get_n_years(dataset, years):
     """
     Construct horizon-specific binary prognosis labels.
@@ -335,11 +298,9 @@ def get_n_years(dataset, years):
     y_strat = np.array([str(int(y)) + str(r) for y, r in zip(Y, R_keep)], dtype=object)
     return Y, R_keep, y_strat, sample_keep
 
-
 # -----------------------------------------------------------------------------
 # Multi-omics representation
 # -----------------------------------------------------------------------------
-
 def load_omics_table(filename):
     """Load the manuscript-format omics CSV and return patient x molecular-feature data."""
     path = DATA_DIR / filename
@@ -352,7 +313,6 @@ def load_omics_table(filename):
     raw = raw.reset_index().drop_duplicates(subset="index", keep="first").set_index("index")
     raw.index = raw.index.astype(str)
     return raw
-
 
 def build_weighted_three_omics_matrix(df_a, df_b, df_c, w1, w2, w3, eps=1e-8):
     """
@@ -398,7 +358,6 @@ def build_weighted_three_omics_matrix(df_a, df_b, df_c, w1, w2, w3, eps=1e-8):
 
     return common, X_comb
 
-
 def pcc_to_anchors(X_query, X_anchor, eps=1e-8):
     """Pearson correlation of each query patient to each anchor patient."""
     Xq = X_query.astype(np.float32)
@@ -412,11 +371,9 @@ def pcc_to_anchors(X_query, X_anchor, eps=1e-8):
     p = Xq.shape[1]
     return ((Xq @ Xa.T) / max(p - 1, 1)).astype(np.float32)
 
-
 # -----------------------------------------------------------------------------
 # Prediction / metrics
 # -----------------------------------------------------------------------------
-
 def find_best_threshold_by_f1(y_true, score, average="binary"):
     y_true = np.asarray(y_true).astype(int).reshape(-1)
     score = np.asarray(score).astype(float).reshape(-1)
@@ -441,7 +398,6 @@ def find_best_threshold_by_f1(y_true, score, average="binary"):
             best_thr, best_f1, best_acc = float(thr), float(f1), float(acc)
 
     return best_thr, best_f1, best_acc
-
 
 def safe_binary_metrics(y_true, y_score, y_pred):
     """Report metrics with event as the positive class."""
@@ -493,7 +449,6 @@ def safe_binary_metrics(y_true, y_score, y_pred):
     out["bacc"] = np.nanmean([sens, spec])
     return out
 
-
 def calibration_metrics(y_true, y_score, n_bins=10):
     y_true = np.asarray(y_true).astype(int).reshape(-1)
     y_score = np.asarray(y_score).astype(float).reshape(-1)
@@ -544,7 +499,6 @@ def calibration_metrics(y_true, y_score, n_bins=10):
         "brier": float(np.mean((y_true_event - y_score_event) ** 2)),
         "bin_table": pd.DataFrame(rows),
     }
-
 
 def train_and_predict(
     X_train_target,
@@ -679,11 +633,9 @@ def train_and_predict(
 
     return test_score_non_event.astype(float), float(test_auc), float(best_thr_event), pred_original_label
 
-
 # -----------------------------------------------------------------------------
 # Fold-level CCSA runner: TL and TLDA share the same split / representation logic
 # -----------------------------------------------------------------------------
-
 def run_ccsa_transfer(seed, dataset, X_m, years, augment_target=False):
     model_name = "TLDA" if augment_target else "TL"
     Y, R, _y_strat, kept_ids = get_n_years(dataset, years)
@@ -930,11 +882,9 @@ def run_ccsa_transfer(seed, dataset, X_m, years, augment_target=False):
     }
     return pd.DataFrame(result, index=[seed]), df_score
 
-
 # -----------------------------------------------------------------------------
 # Reviewer / subgroup outputs
 # -----------------------------------------------------------------------------
-
 def subgroup_performance_table(detail_df, subgroup_cols=None):
     subgroup_cols = subgroup_cols or ["PAM50", "Stage", "Tumor", "Node", "Meta"]
     rows = []
@@ -964,7 +914,6 @@ def subgroup_performance_table(detail_df, subgroup_cols=None):
             })
 
     return pd.DataFrame(rows)
-
 
 def subgroup_calibration_table(detail_df, subgroup_cols=None, n_bins=10):
     subgroup_cols = subgroup_cols or ["PAM50", "Stage", "Tumor", "Node", "Meta"]
@@ -1002,13 +951,11 @@ def subgroup_calibration_table(detail_df, subgroup_cols=None, n_bins=10):
 
     return pd.DataFrame(rows), (pd.concat(bins, ignore_index=True) if bins else pd.DataFrame())
 
-
 def summarize_table(df, metric_cols):
     grouped = df.groupby(["model", "subgroup_name", "subgroup_level"], dropna=False)
     means = grouped[metric_cols].mean().reset_index().rename(columns={c: f"{c}_mean" for c in metric_cols})
     sds = grouped[metric_cols].std().reset_index().rename(columns={c: f"{c}_sd" for c in metric_cols})
     return means.merge(sds, on=["model", "subgroup_name", "subgroup_level"], how="left")
-
 
 def compare_tl_tlda(summary_df):
     tl = summary_df[summary_df["model"] == "TL"].drop(columns=["model"])
@@ -1024,7 +971,6 @@ def compare_tl_tlda(summary_df):
         if a in merged.columns and b in merged.columns:
             merged[f"{metric}_mean_diff_TLDA_minus_TL"] = merged[b] - merged[a]
     return merged
-
 
 def save_reviewer_outputs(detail_df, base_prefix):
     perf_seed = subgroup_performance_table(detail_df)
@@ -1048,11 +994,9 @@ def save_reviewer_outputs(detail_df, base_prefix):
         cal_bins.to_excel(writer, sheet_name="calibration_bins", index=False)
     return out_file
 
-
 # -----------------------------------------------------------------------------
 # Experiment runner
 # -----------------------------------------------------------------------------
-
 def run_combination(meta_data, X_m, weights):
     w1, w2, w3 = weights
     result_list = []
@@ -1104,7 +1048,6 @@ def run_combination(meta_data, X_m, weights):
 
     return res
 
-
 def generate_triple_weight_combinations(step=0.1, min_weight=0.1):
     vals = np.round(np.arange(min_weight, 1.0 + step, step), 2)
     combos = []
@@ -1116,7 +1059,6 @@ def generate_triple_weight_combinations(step=0.1, min_weight=0.1):
             if np.isclose(w1 + w2 + w3, 1.0):
                 combos.append((float(w1), float(w2), float(w3)))
     return combos
-
 
 def validate_inputs():
     required = [
@@ -1132,7 +1074,6 @@ def validate_inputs():
     if missing:
         raise FileNotFoundError("Missing required input files: " + ", ".join(missing))
 
-
 def save_run_config(selected_combinations):
     config = vars(ARGS).copy()
     config["data_dir_resolved"] = str(DATA_DIR)
@@ -1140,7 +1081,6 @@ def save_run_config(selected_combinations):
     config["selected_weight_combinations"] = selected_combinations
     with open(RUN_DIR / "run_config.json", "w") as f:
         json.dump(config, f, indent=2)
-
 
 def main():
     validate_inputs()
@@ -1212,7 +1152,6 @@ def main():
         print(f"***** Finish weights: ({w1}, {w2}, {w3}) *****")
 
     print("================= All trainings are over. =================")
-
 
 if __name__ == "__main__":
     main()
